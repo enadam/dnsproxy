@@ -1,0 +1,110 @@
+Simple but secure UDP-to-UDP DNS forwarder.
+
+This program accepts DNS queries from any number of clients, forwards them
+to the specified upstream server in a secure manner, validates the server's
+responses and returns them to the appropriate clients.  The following
+recommendations are fully implemented for interoperability and security:
+
+  * RFC 5625: DNS Proxy Implementation Guidelines
+  * RFC 5452: Measures for Making DNS More Resilient against Forged Answers
+
+Specifically these measures are taken: (quoting directly from RFC 5452):
+
+  * The resolver should be highly paranoid in its parsing of responses.
+  * The question section of the reply packet is equivalent to that of
+    a question packet currently waiting for a response.
+  * The ID field of the reply packet matches that of the question packet.
+  * The response comes from the same network address to which the question
+    was sent.
+  * The response comes in on the same network address, including port number,
+    from which the question was sent.
+  * Use an unpredictable source port for outgoing queries from the range of
+    available ports (53, or 1024 and above) that is as large as possible and
+    practicable;
+  * Use multiple different source ports simultaneously in case of multiple
+    outstanding queries;
+  * Use an unpredictable query ID for outgoing queries, utilizing the full
+    range available (0-65535).
+
+In addition source ports are varied over time with an aging mechanism.
+Invalid DNS messages are silently discarded (only logged at debug level).
+
+The proxy doesn't generate messages on its own.  If a query cannot be
+forwarded for some reason, it's dropped without returning SERVFAIL.
+Some may consider this another security feature.
+
+The operation of the proxy should be compatible with RFC 2845 (TSIG).
+Other DNS features like EDNS (RFC 2671) and DNS Cookies (RFC 7873) are
+believed to be unaffected as well.
+
+All resource usage can be controlled through command line options.
+Error conditions are handled gracefully except for out of memory.
+Errors are logged on stderr, everything else on stdout.
+
+Usage: dnsproxy [options] <upstream-address> [<upstream-port>]
+
+Options:
+  --help, -h				Print this help and exit.
+  --debug, -D				Print debug logs including the
+					queried domains and enable extra
+					internal sanity checks.
+  --seed, -S <number>     		Initialize the pseudo-random number
+					generator with this seed.  Useful to
+					reproduce a previous run of the
+					program in case a bug is found.
+					If not specified the PRNG is seeded
+					based on the current time.  The seed
+					is printed with the debug logs.
+
+  --listen, -l <address>		Listen for DNS queries on this IPv4
+					address.  The default is 127.0.0.1.
+  --port, -p <port>			Listen for DNS queries on this UDP
+					port.  The default is 9000.
+
+  --timeout, -t <seconds>		Maximum time to wait for a response
+					from the upstream DNS server.
+					The default is 15 seconds.  The system
+					resolver's default is 5 seconds.
+					Specifying 0 disables query expiration.
+  --max-requests, -r <number>		Maximum number of forwarded queries
+					to handle at the same time.  This
+					option influences the maximum memory
+					usage of the program.  The default is
+					250.  Specifying 0 disables the limit.
+					In practice the maximum is 65536,
+					because of the limited size of query ID
+					in DNS messages.
+  --min-gc-time, -T <seconds>		Usually queries are expired as soon as
+					they time out.  However, if there are
+					many of them in quick succession, it is
+					impractical to wake up the program
+					for each one in a short period of time.
+					Instead this case queries are expired 
+					in batches, every <seconds> (5 being
+					the default).  Specifying 0 causes
+					timed out queries to be expired exactly
+					on time always.
+
+  --max-ports, -n <number>		Maximum number of source ports to use
+					for forwarding, 50 by default.  Queries
+					are forwarded through randomly chosen
+					source ports for security.  If <number>
+					is 0, a new port is opened every time,
+					until the system runs out of them.
+					Then one of the already open ports
+					is selected for forwarding.
+  --max-port-lifetime, -N <number>	Close a source port after this many
+					queries have been forwarded through it.
+					This increases security by varying the
+					source ports over time.  Specifying 0
+					allows a port to be reused any number
+					of times.
+
+<upstream-address>:<upstream-port> (default 53) is the IPv4 address of the DNS
+server to forward queries to.
+
+A note on NAT: (quoting RFC 5452):
+
+# It should be noted that the effects of source port randomization may
+# be dramatically reduced by NAT devices that either serialize or limit
+# in volume the UDP source ports used by the querying resolver.
